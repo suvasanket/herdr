@@ -1,0 +1,18 @@
+{
+  "zoom": 1.1,
+  "sounds": {
+    "enabled": true
+  },
+  "font": "IoskeleyMonoTerm Nerd Font",
+  "font_ligatures": false,
+  "ui_font": "iA Writer Mono S",
+  "telemetry": false,
+  "minimum_contrast": 1.0,
+  "colors": {
+    "accent": "#00FF9C",
+    "background": "#101010",
+    "border": "#2C2C2C",
+    "canvas": "#2C2C2C",
+    "chrome": "#2C2C2C"
+  }
+}
