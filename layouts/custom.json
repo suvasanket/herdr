@@ -144,9 +144,9 @@
   "colors": {
     "accent": "#00FF9C",
     "background": "#101010",
-    "border": "#2C2C2C",
-    "canvas": "#2C2C2C",
-    "chrome": "#2C2C2C"
+    "border": "#202020",
+    "canvas": "#202020",
+    "chrome": "#202020"
   },
   "terminal_padding": [
     0,

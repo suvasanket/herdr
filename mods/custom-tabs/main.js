@@ -91,8 +91,9 @@ export default class Tabs extends View {
       const allPanes = panes().filter(p => p.tab === c.id);
       const lead = allPanes.find(p => p.program?.agent) ?? allPanes.find(p => p.focused) ?? allPanes[0];
       const program = lead?.program;
-      const liveTitle = (lead?.title ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
-      const name = (c.named && !/^\d+$/.test(c.name)) ? c.name : (liveTitle || program?.name || c.name || "Terminal");
+      // Match the sidebar's tab label: explicit tab names win; otherwise show
+      // the leading pane's program name, not its generated terminal title.
+      const name = c.named ? c.name : (program?.name ?? "Terminal");
       const st = c.status || lead?.status || allPanes.find(p => p.status)?.status;
       const iconPath = program?.icon ?? "icons/terminal.svg";
       const iconTint = program ? Boolean(program.tint) : true;
