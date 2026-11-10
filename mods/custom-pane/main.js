@@ -6,7 +6,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { panes, props, run, theme, home, layout, nextCommand, focused, spaces } from "herdr";
+import { panes, props, run, theme, home, layout, nextCommand, focused, spaces, hc } from "herdr";
 
 function find(node, id) {
   if (!node) return null;
@@ -32,11 +32,14 @@ function folder(cwd) {
 export default class Pane extends View {
   init(_props, cx) {
     this.hovered = false;
+    this.openingNeovim = false;
     cx.spawn(async () => {
       for (;;) {
         const command = await nextCommand();
         if (command === "smart-close") {
           this.handleSmartClose();
+        } else if (command === "open-neovim" || command === "open-vim") {
+          this.handleOpenNeovim();
         }
       }
     });
@@ -58,6 +61,73 @@ export default class Pane extends View {
       }
     } else if (tabPanes.length === 1) {
       run("tab.close", { id: p.tab });
+    }
+  }
+
+  async handleOpenNeovim() {
+    if (this.openingNeovim) return;
+    this.openingNeovim = true;
+    try {
+      const p = this.me();
+      if (!p) return;
+      const f = focused();
+      const activeSpace = spaces().find((s) => s.active);
+      const activeTabId = f?.tab ?? activeSpace?.tabs?.find((t) => t.active)?.id;
+      if (p.tab !== activeTabId) return;
+
+      const tabPanes = panes().filter((x) => x.tab === p.tab);
+      const targetPane =
+        (f?.pane ? tabPanes.find((x) => x.pane === f.pane) : null) ??
+        (f?.terminal ? tabPanes.find((x) => x.terminal === f.terminal) : null) ??
+        tabPanes.find((x) => x.focused) ??
+        tabPanes[0];
+
+      if (!targetPane || targetPane.pane !== p.pane) return;
+
+      const terminal = targetPane.terminal;
+      if (!terminal) {
+        run("tab.new", { argv: ["nvim"], folder: targetPane.cwd || undefined, space: activeSpace?.id });
+        return;
+      }
+
+      let isBusy = false;
+      try {
+        const res = await hc(["get", terminal, "--json"]);
+        if (res.code === 0) {
+          const info = JSON.parse(res.stdout);
+          const SHELLS = new Set(["zsh", "bash", "fish", "sh", "csh", "tcsh", "ksh", "nu", "pwsh", "cmd.exe", "powershell.exe"]);
+          const fg = info.foreground;
+          const fgName = fg?.name?.toLowerCase() ?? "";
+          const isFgShell = SHELLS.has(fgName);
+
+          if (info.status || targetPane.status) {
+            isBusy = true;
+          } else if (fg && info.pid && fg.pid !== info.pid) {
+            isBusy = true;
+          } else if (fg && !isFgShell) {
+            isBusy = true;
+          } else if (targetPane.program && !targetPane.program.shell) {
+            isBusy = true;
+          }
+        } else {
+          if (targetPane.status || (targetPane.program && !targetPane.program.shell)) {
+            isBusy = true;
+          }
+        }
+      } catch {
+        if (targetPane.status || (targetPane.program && !targetPane.program.shell)) {
+          isBusy = true;
+        }
+      }
+
+      if (isBusy) {
+        run("tab.new", { argv: ["nvim"], folder: targetPane.cwd || undefined, space: activeSpace?.id });
+      } else {
+        await hc(["send", "--force", terminal, "nvim"]);
+        run("pane.focus", { pane: targetPane.pane });
+      }
+    } finally {
+      this.openingNeovim = false;
     }
   }
 

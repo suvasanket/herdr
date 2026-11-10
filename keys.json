@@ -5,6 +5,7 @@
     "cmd-alt-h": "app.hide_others",
     "cmd-t": "tab.new",
     "cmd-w": "custom-pane.smart-close",
+    "cmd-e": "custom-pane.open-neovim",
     "ctrl-tab": "tab.next",
     "ctrl-shift-tab": "tab.prev",
     "cmd-shift-]": "tab.next",
@@ -69,6 +70,7 @@
     "cmd-left": "send:\u0001",
     "cmd-right": "send:\u0005",
     "cmd-backspace": "send:\u0015",
-    "cmd-w": "custom-pane.smart-close"
+    "cmd-w": "custom-pane.smart-close",
+    "cmd-e": "custom-pane.open-neovim"
   }
 }
