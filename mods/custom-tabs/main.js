@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, readTextFile, writeTextFile, appHome } from "herdr";
+import { spaces, panes, terminals, focused, run, openOverlay, theme, window, shared, layout, settings, readTextFile, writeTextFile, appHome } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -84,6 +84,8 @@ export default class Tabs extends View {
     const t = theme();
     const space = spaces().find(p => p.active);
     const shown = space?.tabs ?? [];
+    const allTerminals = terminals();
+    const activeTerm = focused()?.terminal;
     const stop = (_e, cx) => cx.stop_propagation();
     const button = (id, label, action) => div().id(id).size(24).flex_none().flex().items_center().justify_center().rounded(5).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", stop).on_click(action).child(label);
@@ -101,10 +103,27 @@ export default class Tabs extends View {
         ? svg(iconPath).size(14).flex_none().text_color(c.active ? t.foreground : t.muted)
         : image(iconPath).size(14).flex_none();
       const showText = true;
+
+      const tabTerminalAddrs = allPanes.map(p => p.terminal).filter(Boolean);
+      const isSpawned = tabTerminalAddrs.some(addr => {
+        const term = allTerminals.find(x => x.address === addr);
+        return term && Boolean(term.parent);
+      });
+
+      const tabBg = isSpawned
+        ? (c.active ? "#1e40af" : "#172554")
+        : (c.active ? t.background : t.chrome);
+      const tabBorderColor = isSpawned
+        ? (c.active ? "#60a5fa" : "#2563eb66")
+        : (c.active ? t.border : "#00000000");
+      const tabTextColor = isSpawned
+        ? (c.active ? "#ffffff" : "#bfdbfe")
+        : (c.active ? t.foreground : t.muted);
+
       return h_flex().id(`tab-${c.id}`).h(tabCellHeight).px(showText ? 8 : 6).gap(6).rounded(5).items_center().flex_none().text_size(12)
-        .border(1).border_color(c.active ? t.border : "#00000000").bg(c.active ? t.background : t.chrome).text_color(c.active ? t.foreground : t.muted)
-        .hover(s => s.bg(t.hover))
-        .tooltip(c.zoomed ? `${name} (zoomed)` : name)
+        .border(1).border_color(tabBorderColor).bg(tabBg).text_color(tabTextColor)
+        .hover(s => s.bg(isSpawned ? "#1e3a8a" : t.hover))
+        .tooltip(c.zoomed ? `${name} (zoomed)` : (isSpawned ? `${name} (Spawned by agent)` : name))
         .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); this.pressed = i; if (e.click_count === 2) run("tab.rename", { id: c.id }); })
         .on_mouse_up("left", () => {
           const from = this.pressed; this.pressed = null;
@@ -112,11 +131,67 @@ export default class Tabs extends View {
           else run("tab.select", { id: c.id });
         })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
+        .when(isSpawned, el => el.child(
+          h_flex().gap(2).items_center().flex_none().children([
+            div().size(2.5).rounded(1.5).bg("#38bdf8"),
+            div().size(2.5).rounded(1.5).bg("#60a5fa"),
+          ])
+        ))
         .child(iconEl)
         .when(showText, el => el.child(div().max_w(220).truncate().child(c.zoomed ? `${name} Z` : name)))
-        .when(st === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
+        .when(st === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(isSpawned ? "#38bdf8" : t.working).spin(900)))
         .when(st === "blocked" || st === "done", el => el.child(div().size(6).rounded(3).bg(t[st])))
-        .when(c.active, el => el.child(div().id(`close-${c.id}`).text_color(t.dim).hover(s => s.text_color(t.foreground)).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); run("tab.close", { id: c.id }); }).child(svg("mods/pane/close.svg").size(11))));
+        .when(c.active, el => el.child(div().id(`close-${c.id}`).text_color(isSpawned ? "#bfdbfe" : t.dim).hover(s => s.text_color("#ffffff")).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); run("tab.close", { id: c.id }); }).child(svg("mods/pane/close.svg").size(11))));
+    };
+
+    const subItem = (k) => {
+      const kProg = k.program;
+      const kName = k.name || kProg?.name || k.address;
+      const kIconPath = kProg?.icon ?? "icons/terminal.svg";
+      const kIconTint = kProg ? Boolean(kProg.tint) : true;
+      const kIconEl = kIconTint
+        ? svg(kIconPath).size(13).flex_none().text_color("#93c5fd")
+        : image(kIconPath).size(13).flex_none();
+      const kStatus = k.status?.state ?? (k.status === "error" ? "blocked" : (k.state === "finished" ? "done" : k.status ?? "idle"));
+      const isWorking = kStatus === "working";
+      const isFocused = activeTerm === k.address;
+
+      return h_flex().id(`sub-tab-${k.address}`).h(tabCellHeight).px(8).gap(5).rounded(5).items_center().flex_none().text_size(12)
+        .border(1).border_color(isFocused ? "#60a5fa" : "#2563eb88")
+        .bg(isFocused ? "#1e40af" : "#172554")
+        .text_color(isFocused ? "#ffffff" : "#bfdbfe")
+        .hover(s => s.bg("#1e3a8a").border_color("#3b82f6"))
+        .tooltip(`Spawned by agent: ${kName}`)
+        .on_mouse_down("left", stop)
+        .on_click(() => {
+          if (k.state === "live") run("terminal.peek", { terminal: k.address });
+        })
+        .child(
+          h_flex().gap(2).items_center().flex_none().children([
+            div().size(2.5).rounded(1.5).bg("#38bdf8"),
+            div().size(2.5).rounded(1.5).bg("#60a5fa"),
+          ])
+        )
+        .child(kIconEl)
+        .child(div().max_w(160).truncate().child(kName))
+        .when(isWorking, el => el.child(
+          svg("mods/workspace-chrome/spinner.svg").size(11).flex_none().text_color("#38bdf8").spin(900)
+        ))
+        .when(!isWorking && (kStatus === "blocked" || kStatus === "error"), el => el.child(
+          div().size(6).rounded(3).bg(t.blocked)
+        ))
+        .when(!isWorking && kStatus === "done", el => el.child(
+          div().size(6).rounded(3).bg("#34d399")
+        ))
+        .child(
+          div().id(`close-sub-${k.address}`).text_color("#93c5fd88").hover(s => s.text_color("#ffffff"))
+            .on_mouse_down("left", stop)
+            .on_click((_e, cx) => {
+              cx.stop_propagation();
+              run("terminal.kill", { terminal: k.address });
+            })
+            .child(svg("mods/pane/close.svg").size(10))
+        );
     };
     const root = layout(), sidebar = find(root, "sidebar"), w = window();
     // Old saved rails and a dragged-narrow sidebar can be smaller than the window buttons.
@@ -147,7 +222,16 @@ export default class Tabs extends View {
     return h_flex().size_full().min_w(0).h(tabHeight).px(framePadding).pl(lightsPadding).gap(4).items_center().bg(t.chrome).border_b(border).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
-      .child(h_flex().id("tab-scroll").flex_1().min_w(0).h(tabCellHeight).items_center().gap(3).overflow_x_scrollbar().children(shown.map(item))
+      .child(h_flex().id("tab-scroll").flex_1().min_w(0).h(tabCellHeight).items_center().gap(3).overflow_x_scrollbar()
+        .children(shown.flatMap((c, i) => {
+          const allPanes = panes().filter(p => p.tab === c.id);
+          const tabTerminalAddrs = allPanes.map(p => p.terminal).filter(Boolean);
+          const tabKids = allTerminals.filter(k =>
+            k.parent && tabTerminalAddrs.includes(k.parent) &&
+            (k.state === "live" || (k.labels && k.labels["pi.session"] && k.state !== "removed"))
+          );
+          return [item(c, i), ...tabKids.map(subItem)];
+        }))
         .child(div().id("tab-new").size(20).flex_none().flex().items_center().justify_center().rounded(4).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer().on_mouse_down("left", stop).on_click(() => run("tab.new")).child("+")))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))

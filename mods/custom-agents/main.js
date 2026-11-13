@@ -416,7 +416,7 @@ export default class Agents extends View {
     const hasNext = curIdx !== -1 && curIdx < spList.length - 1;
     const spaceTabs = curSpace?.tabs ?? [];
 
-    const tabRows = spaceTabs.map(tab => {
+    const tabRows = spaceTabs.flatMap(tab => {
       const tabPanes = panes().filter(p => p.tab === tab.id);
       const lead = leads.get(tab.id) ?? tabPanes[0];
       const prog = lead?.program;
@@ -430,40 +430,190 @@ export default class Agents extends View {
       const isAgent = Boolean(ag || prog?.agent || (tab.status && tab.status !== "idle"));
       const status = ag?.status ?? tab.status;
 
+      // Detect if this tab itself is spawned, or if it has sub-agents
+      const tabTerminalAddrs = tabPanes.map(p => p.terminal).filter(Boolean);
+      const isTabSpawned = tabTerminalAddrs.some(addr => {
+        const term = all.find(x => x.address === addr);
+        return term && Boolean(term.parent);
+      });
+      const spawnedKids = all.filter(k =>
+        k.parent && tabTerminalAddrs.includes(k.parent) &&
+        (k.state === "live" || (k.labels && k.labels["pi.session"] && k.state !== "removed"))
+      );
+
+      // Connecting dots indicator helper
+      const connectingDots = (horizontal = true) => horizontal
+        ? h_flex().items_center().gap(2.5).flex_none().children([
+            div().size(2.5).rounded(1.5).bg("#38bdf8"),
+            div().size(2.5).rounded(1.5).bg("#60a5fa"),
+            div().size(3).rounded(1.5).bg("#93c5fd"),
+          ])
+        : v_flex().items_center().justify_center().py(2).gap(2.5).children([
+            div().size(2.5).rounded(1.5).bg("#38bdf8"),
+            div().size(2.5).rounded(1.5).bg("#60a5fa"),
+          ]);
+
       if (collapsed) {
-        return h_flex()
+        const tabButton = h_flex()
+          .id(`tab-btn-${tab.id}`)
+          .size(36)
+          .flex_none()
+          .relative()
+          .rounded(8)
+          .items_center()
+          .justify_center()
+          .cursor_pointer()
+          .tooltip(isTabSpawned ? `${tabName} (Spawned by agent)` : tabName)
+          .when(isTabSpawned && tab.active, el => el.bg("#1e40af").border(1).border_color("#60a5fa"))
+          .when(isTabSpawned && !tab.active, el => el.bg("#172554").border(1).border_color("#2563eb66"))
+          .when(!isTabSpawned && tab.active, el => el.bg(t.selected))
+          .when(!isTabSpawned && !tab.active, el => el.hover(s => s.bg(t.hover)))
+          .on_click(() => run("tab.select", { id: tab.id }))
+          .child(pic)
+          .when(isTabSpawned, el => el.child(
+            h_flex().gap(1).absolute().top(2).left(2).children([
+              div().size(2.5).rounded(1.5).bg("#38bdf8"),
+              div().size(2.5).rounded(1.5).bg("#60a5fa"),
+            ])
+          ))
+          .when(status === "working", el => el.child(
+            div().size(6).rounded(3).bg(isTabSpawned ? "#38bdf8" : t.working).absolute().top(3).right(3)
+          ))
+          .when(status === "blocked" || status === "done", el => el.child(
+            div().size(6).rounded(3).bg(t[status]).absolute().top(3).right(3)
+          ));
+
+        const parentRow = h_flex()
           .id(`tab-row-${tab.id}`)
           .w_full()
           .py(3)
           .flex_none()
           .items_center()
           .justify_center()
-          .child(
-            h_flex()
-              .id(`tab-btn-${tab.id}`)
-              .size(36)
-              .flex_none()
-              .relative()
-              .rounded(8)
-              .items_center()
-              .justify_center()
-              .cursor_pointer()
-              .tooltip(tabName)
-              .when(tab.active, el => el.bg(t.selected))
-              .when(!tab.active, el => el.hover(s => s.bg(t.hover)))
-              .on_click(() => run("tab.select", { id: tab.id }))
-              .child(pic)
-              .when(status === "working", el => el.child(
-                div().size(6).rounded(3).bg(t.working).absolute().top(3).right(3)
-              ))
-              .when(status === "blocked" || status === "done", el => el.child(
-                div().size(6).rounded(3).bg(t[status]).absolute().top(3).right(3)
-              ))
-          );
+          .child(tabButton);
+
+        if (spawnedKids.length === 0) return [parentRow];
+
+        // In compact view, render connecting dots and child button for each spawned agent
+        const kidElements = spawnedKids.flatMap((k) => {
+          const kProg = k.program;
+          const kIcon = kProg?.icon ?? "icons/terminal.svg";
+          const kTint = kProg ? Boolean(kProg.tint) : true;
+          const kPic = kTint
+            ? svg(kIcon).size(13).flex_none().text_color("#93c5fd")
+            : image(kIcon).w(13).h(13).flex_none();
+          const kName = k.name || kProg?.name || k.address;
+          const kStatus = k.status?.state ?? (k.status === "error" ? "blocked" : (k.state === "finished" ? "done" : k.status ?? "idle"));
+          const isWorking = kStatus === "working";
+          const isFocused = focused()?.terminal === k.address;
+
+          const dotsEl = h_flex().w_full().items_center().justify_center().py(1).child(connectingDots(false));
+
+          const kidBtn = h_flex()
+            .id(`sub-btn-${k.address}`)
+            .size(30)
+            .flex_none()
+            .relative()
+            .rounded(7)
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .border(1)
+            .border_color(isFocused ? "#60a5fa" : "#2563eb88")
+            .bg(isFocused ? "#1e40af" : "#172554")
+            .hover(s => s.bg("#1e3a8a").border_color("#3b82f6"))
+            .tooltip(`Spawned by agent: ${kName}`)
+            .on_click(() => {
+              if (k.state === "live") run("terminal.peek", { terminal: k.address });
+              else run("tab.select", { id: tab.id });
+            })
+            .child(div().size(4).rounded(2).bg("#38bdf8").absolute().top(2).left(2))
+            .child(kPic)
+            .when(isWorking, el => el.child(
+              div().size(5).rounded(2.5).bg("#38bdf8").absolute().top(2).right(2)
+            ))
+            .when(!isWorking && (kStatus === "blocked" || kStatus === "error"), el => el.child(
+              div().size(5).rounded(2.5).bg(t.blocked).absolute().top(2).right(2)
+            ))
+            .when(!isWorking && kStatus === "done", el => el.child(
+              div().size(5).rounded(2.5).bg("#34d399").absolute().top(2).right(2)
+            ));
+
+          const kidRow = h_flex()
+            .id(`sub-row-${k.address}`)
+            .w_full()
+            .py(2)
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .child(kidBtn);
+
+          return [dotsEl, kidRow];
+        });
+
+        return [parentRow, ...kidElements];
       }
 
-      if (!isAgent) {
+      // Helper for spawned subagent cards in expanded view
+      const kidCards = spawnedKids.map((k) => {
+        const kProg = k.program;
+        const kIcon = kProg?.icon ?? "icons/terminal.svg";
+        const kTint = kProg ? Boolean(kProg.tint) : true;
+        const kPic = kTint
+          ? svg(kIcon).size(14).flex_none().text_color("#93c5fd")
+          : image(kIcon).w(14).h(14).flex_none();
+        const kName = k.name || kProg?.name || k.address;
+        const kStatus = k.status?.state ?? (k.status === "error" ? "blocked" : (k.state === "finished" ? "done" : k.status ?? "idle"));
+        const isWorking = kStatus === "working";
+        const isFocused = focused()?.terminal === k.address;
+
         return h_flex()
+          .id(`sub-tab-card-${k.address}`)
+          .w_full()
+          .ml(12)
+          .my(2)
+          .h(32)
+          .px(8)
+          .gap(7)
+          .flex_none()
+          .items_center()
+          .rounded(6)
+          .border(1)
+          .border_color(isFocused ? "#60a5fa" : "#2563eb66")
+          .bg(isFocused ? "#1e40af" : "#172554")
+          .text_color(isFocused ? "#ffffff" : "#bfdbfe")
+          .hover(s => s.bg("#1e3a8a").border_color("#3b82f6"))
+          .cursor_pointer()
+          .tooltip(`Spawned by agent: ${kName}`)
+          .on_click(() => {
+            if (k.state === "live") run("terminal.peek", { terminal: k.address });
+            else run("tab.select", { id: tab.id });
+          })
+          .child(connectingDots(true))
+          .child(kPic)
+          .child(
+            h_flex().flex_1().min_w(0).gap(5).items_center()
+              .child(div().min_w(0).max_w(120).truncate().text_size(12).font_medium().text_color("#ffffff").child(kName))
+              .child(div().px(4).py(1).rounded(3).bg("#1d4ed844").border(1).border_color("#3b82f644").text_size(9.5).text_color("#93c5fd").child("spawned"))
+          )
+          .when(isWorking, el => el.child(
+            svg("mods/workspace-chrome/spinner.svg").size(11).flex_none().text_color("#38bdf8").spin(900)
+          ))
+          .when(!isWorking && (kStatus === "blocked" || kStatus === "error"), el => el.child(
+            div().size(6).rounded(3).bg(t.blocked)
+          ))
+          .when(!isWorking && kStatus === "done", el => el.child(
+            div().size(6).rounded(3).bg("#34d399")
+          ))
+          .when(!isWorking && kStatus !== "blocked" && kStatus !== "error" && kStatus !== "done", el => el.child(
+            div().size(5).rounded(2.5).border(1).border_color("#60a5fa")
+          ));
+      });
+
+      if (!isAgent) {
+        const rowBg = isTabSpawned ? (tab.active ? "#1e40af" : "#172554") : (tab.active ? t.selected : t.surface);
+        const rowBorder = isTabSpawned ? (tab.active ? "#60a5fa" : "#2563eb66") : "#00000000";
+        const nonAgentRow = h_flex()
           .id(`tab-row-${tab.id}`)
           .h(28)
           .px(8)
@@ -471,15 +621,21 @@ export default class Agents extends View {
           .flex_none()
           .items_center()
           .rounded(6)
-          .hover(s => s.bg(t.hover))
+          .border(1)
+          .border_color(rowBorder)
+          .bg(rowBg)
+          .hover(s => s.bg(isTabSpawned ? "#1e3a8a" : t.hover))
           .on_click(() => run("tab.select", { id: tab.id }))
-          .when(tab.active, el => el.bg(t.selected))
+          .when(isTabSpawned, el => el.child(connectingDots(true)))
           .child(pic)
           .child(h_flex().flex_1().min_w(0).gap(5).items_center()
-            .child(div().min_w(0).max_w(140).truncate().text_size(12.5).text_color(tab.active ? t.foreground : t.muted).child(tabName))
-            .when(Boolean(sub), el => el.child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(`· ${sub}`))))
-          .when(status === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
+            .child(div().min_w(0).max_w(140).truncate().text_size(12.5).text_color(tab.active ? t.foreground : (isTabSpawned ? "#bfdbfe" : t.muted)).child(tabName))
+            .when(isTabSpawned, el => el.child(div().px(4).py(1).rounded(3).bg("#1d4ed844").border(1).border_color("#3b82f644").text_size(9.5).text_color("#93c5fd").child("spawned")))
+            .when(Boolean(sub) && !isTabSpawned, el => el.child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(`· ${sub}`))))
+          .when(status === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(isTabSpawned ? "#38bdf8" : t.working).spin(900)))
           .when(status === "blocked" || status === "done", el => el.child(div().size(6).rounded(3).bg(t[status])));
+
+        return [nonAgentRow, ...kidCards];
       }
 
       // Expanded Agent View with rich detailing
@@ -490,7 +646,7 @@ export default class Agents extends View {
 
       const statusBadge = () => {
         if (status === "working") {
-          return h_flex().gap(4).items_center().text_size(11).font_medium().text_color(t.working)
+          return h_flex().gap(4).items_center().text_size(11).font_medium().text_color(isTabSpawned ? "#38bdf8" : t.working)
             .child(svg("mods/workspace-chrome/spinner.svg").size(11).spin(900))
             .child(timeStr || "Working");
         }
@@ -502,20 +658,25 @@ export default class Agents extends View {
             .child(div().size(6).rounded(3).bg(t.done))
             .child("Done" + (timeStr ? ` · ${timeStr}` : ""));
         }
-        return h_flex().gap(4).items_center().text_size(11).text_color(t.dim)
-          .child(div().size(6).rounded(3).border(1).border_color(t.dim))
+        return h_flex().gap(4).items_center().text_size(11).text_color(isTabSpawned ? "#bfdbfe" : t.dim)
+          .child(div().size(6).rounded(3).border(1).border_color(isTabSpawned ? "#60a5fa" : t.dim))
           .child("Idle");
       };
 
-      return v_flex()
+      const agentBg = isTabSpawned ? (tab.active ? "#1e40af" : "#172554") : (tab.active ? t.selected : t.surface);
+      const agentBorder = isTabSpawned ? (tab.active ? "#60a5fa" : "#2563eb66") : "#00000000";
+
+      const agentCard = v_flex()
         .id(`tab-row-${tab.id}`)
         .w_full()
         .p(8)
         .gap(6)
         .rounded(8)
         .cursor_pointer()
-        .bg(tab.active ? t.selected : t.surface)
-        .hover(s => s.bg(t.hover))
+        .border(1)
+        .border_color(agentBorder)
+        .bg(agentBg)
+        .hover(s => s.bg(isTabSpawned ? "#1e3a8a" : t.hover))
         .on_click(() => run("tab.select", { id: tab.id }))
         // Top row: Agent icon, name, and status badge
         .child(
@@ -525,9 +686,11 @@ export default class Agents extends View {
             .justify_between()
             .child(
               h_flex().gap(7).items_center().min_w(0).flex_1()
+                .when(isTabSpawned, el => el.child(connectingDots(true)))
                 .child(pic)
-                .child(div().font_medium().text_size(12.5).text_color(tab.active ? t.foreground : t.muted).flex_none().child(tabName))
-                .when(Boolean(sub), el => el.child(div().text_size(11).text_color(t.dim).truncate().flex_1().child(`· ${sub}`))),
+                .child(div().font_medium().text_size(12.5).text_color(tab.active ? t.foreground : (isTabSpawned ? "#ffffff" : t.muted)).flex_none().child(tabName))
+                .when(isTabSpawned, el => el.child(div().px(4).py(1).rounded(3).bg("#1d4ed844").border(1).border_color("#3b82f644").text_size(9.5).text_color("#93c5fd").child("spawned")))
+                .when(Boolean(sub) && !isTabSpawned, el => el.child(div().text_size(11).text_color(t.dim).truncate().flex_1().child(`· ${sub}`))),
             )
             .child(statusBadge()),
         )
@@ -538,17 +701,19 @@ export default class Agents extends View {
             .items_center()
             .justify_between()
             .text_size(11)
-            .text_color(t.dim)
+            .text_color(isTabSpawned ? "#bfdbfe" : t.dim)
             .child(div().flex_1().min_w(0).truncate().child(taskDetail))
             .when(Boolean(lead?.branch || curSpace?.branch), el =>
               el.child(h_flex().gap(4).items_center().min_w(0).ml(6)
-                .child(svg("mods/custom-agents/branch.svg").size(11).flex_none().text_color(t.dim))
+                .child(svg("mods/custom-agents/branch.svg").size(11).flex_none().text_color(isTabSpawned ? "#93c5fd" : t.dim))
                 .child(div().max_w(100).truncate().child(lead?.branch || curSpace.branch))),
             )
-            .when(subs.length > 0, el =>
-              el.child(div().px(4).rounded(3).bg(t.raised).text_size(10).child(`${subs.length} sub`)),
+            .when(spawnedKids.length > 0 || subs.length > 0, el =>
+              el.child(div().px(5).py(1).rounded(3).bg("#1d4ed844").border(1).border_color("#3b82f666").text_size(10).text_color("#93c5fd").child(`${spawnedKids.length || subs.length} spawned`)),
             ),
         );
+
+      return [agentCard, ...kidCards];
     });
 
     const navButton = (id, icon, action) => div().id(id).size(18).flex_none().flex().items_center().justify_center().rounded(4)

@@ -7,12 +7,13 @@
   "font_ligatures": false,
   "ui_font": "iA Writer Mono S",
   "telemetry": false,
-  "minimum_contrast": 1.0,
+  "minimum_contrast": 1,
   "colors": {
     "accent": "#00FF9C",
     "background": "#101010",
     "border": "#202020",
     "canvas": "#202020",
     "chrome": "#202020"
-  }
+  },
+  "font_size": 15
 }
